@@ -229,6 +229,7 @@ def jaccard_similarity(candidate_pairs,data):
 #This part is dedicated to plotting the similar users with a Jaccard Similarity above 0.5, with ascending order 
 
 def jaccardSim_results(simPairs_value):
+    #Plots the distribution of Jaccard Similarity values
     import matplotlib.pyplot as plt
 
     plt.scatter(np.arange(len(simPairs_value)),np.sort(simPairs_value),s=5)
@@ -238,14 +239,22 @@ def jaccardSim_results(simPairs_value):
     plt.savefig('jc_similarity_result.png')
 
 def apply_jaccardSim(data_path,seed):
+    """
+    This function applies the full algorithm corresponding to finding the similar user pairs using the Jaccard Similarity. 
+    Args:
+        data_path::[str]
+            The path to the data file, input by the user. 
+        seed::[int]
+            The random NumPy seed used for the RNG dependant functions in the code, input by the user. 
+    """
 
     b = 35  #Number of bands we want to use to split the signature matrix in        
     r = 9   #The rows of values per band 
-    m = 0.1 #fraction of rows that we want to pick a random permutation from. According to the book (top of page 88), the
+    m = 0.1 #Fraction of rows that we want to pick a random permutation from. According to the book (top of page 88), the
             #resulting signature matrix should still be valid. This also increases speed of the calculation of the signature matrix 
             #by a factor 1/m, which helps a lot. 
 
-    #Use 'seed' as argument for any function that uses RNG 
+    #We use 'seed' as argument for any function that uses RNG 
 
     data = loadData_js(data_path)
     sigMatrix = minhashing(data,m,int(b*r),seed) 
@@ -255,10 +264,8 @@ def apply_jaccardSim(data_path,seed):
 
     hash_functions = [generate_hash_function(r, dim_bandedMatrix[2],seed) for _ in range(b*10)]
     candidate_pairs = hashing(hash_functions,dim_bandedMatrix[2],b,split_sigMatrix)
-    similar_pairs,similar_pairs_value = jaccard_similarity(candidate_pairs,data)    
+    _,similar_pairs_value = jaccard_similarity(candidate_pairs,data)    
     jaccardSim_results(similar_pairs_value)
-
-#apply_jaccardSim('user_movie_rating.npy',1702)
 
 import sys, getopt
 
