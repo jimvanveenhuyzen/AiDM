@@ -120,7 +120,7 @@ def generate_hash_function(size,total_users,seed):
             The NumPy seed used for the random functions.
         
     Returns:
-        (Hash Function)::[tuple]
+        (functional)::[tuple]
             Returns a hash function we can use to hash values to buckets. 
     """
     np.random.seed(seed)
@@ -130,8 +130,22 @@ def generate_hash_function(size,total_users,seed):
     return lambda x: tuple((a * x + b) % total_users)
 
 def hashing(hash_functions,usersTotal,b,split_S):
-
-    #Hashing the bands to various buckets 
+    """
+    In this function we hash the bands to various buckets using the hash function defined above. 
+    Args:
+        hash_functions:[(functional)]
+            The hash functions we use to hash various bands to the buckets
+        usersTotal::[int]
+            The total number of users. 
+        b::[int]
+            The number of bands we used. 
+        split_S::[NumPy 3D Array]
+            The signature matrix split in various bands, resulting in a 3D NumPy array. 
+        
+    Returns:
+        candidate_pairs::[NumPy 2D Array]
+            Returns a 2-dimensinal NumPy array of user pairs that we found to be candidate pairs. 
+    """
     hash_table = {}
     hash_counter = 0 
     candidate_pairs = []
@@ -142,6 +156,7 @@ def hashing(hash_functions,usersTotal,b,split_S):
             #Apply the hash function to the band
             hashed_value = hash_functions[band_idx](tuple(current_band))
 
+            #Check if the hashed_value is in the hash_table or not 
             if hashed_value not in hash_table:
                 hash_table[hashed_value] = [(u, band_idx)]
             else:
@@ -154,7 +169,7 @@ def hashing(hash_functions,usersTotal,b,split_S):
                 #Add the current pair to the hash table
                 hash_table[hashed_value].append((u, band_idx))
 
-    #Finally, we sort the candidate pairs such that we start off with the smallest u1 
+    #Finally, we sort the candidate pairs such that we start off with the smallest u1
     candidate_pairs = np.array(candidate_pairs)
     candidate_pairs[:,0], candidate_pairs[:,1] = candidate_pairs[:,1], candidate_pairs[:,0].copy()
     sorted_idx = np.argsort(candidate_pairs[:,0])
@@ -164,26 +179,46 @@ def hashing(hash_functions,usersTotal,b,split_S):
     return candidate_pairs
 
 def jaccard_similarity(candidate_pairs,data):
-    #In this function we use numpy to vectorize the Jaccard Similarity calculations for all candidate pairs
-    #Using numpy drastically improves the efficiency of the code
-    #The memory cost of converting sparse row matrices with datatype int64 costs a lot of RAM, so for that reason we convert the dtype to int8 first 
+    """
+    In this function we use numpy to vectorize the Jaccard Similarity calculations for all candidate pairs.
+    Using numpy to read in all users at once drastically improves the efficiency of the code.
+    The memory cost of converting sparse row matrices with datatype int64 costs a lot of RAM, so for that reason we convert the dtype to int8 first.
+    Args:
+        candidate_pairs::[NumPy 2D Array]
+            2-dimensinal NumPy array of user pairs that we found to be candidate pairs. 
+        data::[sparse matrix]
+            The sparse row matrix of the data defined before
+        
+    Returns:
+        simPairs::[2D List]
+            Returns a list of the user-pairs that have a Jaccard Similarity above 0.5
+        simPairs_value::[List]
+            Returns a list of the corresponding Jaccard Similarities of the user pairs. 
+            Useful for plotting! 
+    """
+    #Here, we read in all the users from the sparse row matrix at once. 
     users1 = data[:,candidate_pairs[:,0]].astype(np.int8).toarray()
     users2 = data[:,candidate_pairs[:,1]].astype(np.int8).toarray()
 
     num_pairs = len(candidate_pairs[:,0])
     simPairs = []
     simPairs_value = []
+    #Write the accepted user pairs to a file per iteration
     with open('js.txt','w') as file:
         for i in range(num_pairs):
             one_gave_rating = np.logical_and(users1[:,i],users2[:,i]) #The logical AND operator represents the intersection
             both_gave_rating = np.logical_or(users1[:,i],users2[:,i]) #The logical OR operator represents the union 
 
+            #Count the number of elements in the intersection and union of C_1 and C_2 (movie vectors)
             nom = np.sum(one_gave_rating)
             denom = np.sum(both_gave_rating)
+            #Calculate the resulting Jac. Sim. value
             total = nom/denom
+            #Check if above threshold AND if we are not double-counting pairs
             if total > 0.5 and total not in simPairs_value:
                 simPairs.append(candidate_pairs[i].tolist())
                 simPairs_value.append(total)
+                #Write to a .txt file in the correct format
                 file.write(f"{candidate_pairs[i,0]}, {candidate_pairs[i,1]}\n")
                 
     print('Accepted user pairs: \n',simPairs)
