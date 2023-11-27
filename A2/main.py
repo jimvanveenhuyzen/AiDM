@@ -2,10 +2,20 @@
 import numpy as np
 from scipy.sparse import csr_matrix,csc_matrix
 import timeit
-np.random.seed(1702)
 
-#Load in the large data file and inspect the data 
 def loadData_js(data_path):
+    """
+    This function is dedicated to loading in the data, converting the data to a sparse row matrix (since the data is sparse), 
+    and finally inspecting the data a bit to see whether the number of users and movies match up with our expectations
+
+    Args:
+        data_path::[str]
+            The path to the data file, in this case user_movie_rating.npy
+    Returns:
+        sparse_rowMatrix_full::[sparse matrix]
+            Returns a sparse row matrix containing all the data, with movieIDs as rows and userIDs as columns 
+    """
+    #Load in the large data file and inspect the data 
     data = np.load(data_path)
 
     #Split the data into three lists of ratings, movies and users respectively. 
@@ -26,8 +36,27 @@ def loadData_js(data_path):
     return sparse_rowMatrix_full
 
 def minhashing(data_matrix,row_fraction,num_permutations,seed):
-    #This function creates a signature matrix for the data 
+    """
+    This function creates a signature matrix using the sparse row matrix as input. To do so, the Minhashing theory described
+    in the report is used. For more information on the general picture, please consult the report. 
+    The size of the produced signature matrix can be influenced by choosing the number of permutations, num_permutations. 
 
+    Args:
+        data_matrix::[sparse matrix]
+            Uses a sparse row matrix created using the data. 
+        row_fraction::[float]
+            This argument tells the code what fraction of the number of movies to use in producing the signature matrix.
+            Using this significantly speeds up the signature matrix creation.
+        num_permutations::[int]
+            Tells the code how many permutations to use for the signature matrix, directly corresponding to the number
+            of rows the signature matrix will contain. 
+        seed::[int]
+            The NumPy seed used for the random functions.
+        
+    Returns:
+        signatureMatrix::[NumPy 2D array]
+            Returns a two-dimensional numpy array (matrix) with rows the number of permutations and columns the number of users
+    """
     np.random.seed(seed)
     #Make an empty (zeros) matrix for the 100 random permutations
     random_perm_matrix = np.zeros((data_matrix.shape[0], num_permutations)) 
@@ -57,14 +86,43 @@ def minhashing(data_matrix,row_fraction,num_permutations,seed):
     return np.array(signatureMatrix,dtype=np.int16)
 
 def split_vector(signature, b, r):
-    #Code splitting signature in b parts
+    """
+    Code splitting the signature matrix in b parts. The way we wrote the code, the following always holds:
+    num_permutations = b*r. 
+
+    Args:
+        signature::[NumPy 2D array]
+            The signature matrix created before. 
+        b::[int]
+            The number of bands we want to split the signature matrix in. 
+        r::[int]
+            The number of rows we want to split the signature matirx in. 
+        
+    Returns:
+        subvecs::[NumPy 3D array]
+            Returns a three-dimensional numpy array with axis 0 the number of bands, axis 1 the rows and axis 2 the number of users. 
+    """
     subvecs = []
     for i in range(0, signature.shape[0],r):
         subvecs.append(signature[i : i+r])
     return np.array(subvecs,dtype=np.int32)
 
 def generate_hash_function(size,total_users,seed):
-    #Function to generate a random hash function
+    """
+    Function to generate a random hash function. Based on a Linear Congruential Generator (LCG). 
+    We use a different random seed for a and b to increase the randomness of the pseudo-RNG. 
+    Args:
+        size::[int]
+            Amount of hash functions we want to produce 
+        total_users::[int]
+            The total number of users. 
+        seed::[int]
+            The NumPy seed used for the random functions.
+        
+    Returns:
+        (Hash Function)::[tuple]
+            Returns a hash function we can use to hash values to buckets. 
+    """
     np.random.seed(seed)
     a = np.random.randint(1, 1000, size)
     np.random.seed(int(seed+1))
@@ -142,11 +200,11 @@ def jaccardSim_results(simPairs_value):
     plt.xlabel('Most similar pairs')
     plt.ylabel('Jaccard Similarity')
     plt.title('{} pairs with JS > 0.5'.format(len(simPairs_value)))
-    plt.show()
+    plt.savefig('jc_similarity_result.png')
 
 def apply_jaccardSim(data_path,seed):
 
-    b = 30  #Number of bands we want to use to split the signature matrix in        
+    b = 35  #Number of bands we want to use to split the signature matrix in        
     r = 9   #The rows of values per band 
     m = 0.1 #fraction of rows that we want to pick a random permutation from. According to the book (top of page 88), the
             #resulting signature matrix should still be valid. This also increases speed of the calculation of the signature matrix 
