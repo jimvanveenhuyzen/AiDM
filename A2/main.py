@@ -1,7 +1,10 @@
 #Import all the neccessary libraries
 import numpy as np
 from scipy.sparse import csr_matrix,csc_matrix
+import concurrent.futures
 import timeit
+import matplotlib.pyplot as plt
+import sys, getopt
 
 def loadData_js(data_path):
     """
@@ -120,7 +123,7 @@ def generate_hash_function(size,total_users,seed):
             The NumPy seed used for the random functions.
         
     Returns:
-        (functional)::[tuple]
+        (Hash Function)::[tuple]
             Returns a hash function we can use to hash values to buckets. 
     """
     np.random.seed(seed)
@@ -130,22 +133,8 @@ def generate_hash_function(size,total_users,seed):
     return lambda x: tuple((a * x + b) % total_users)
 
 def hashing(hash_functions,usersTotal,b,split_S):
-    """
-    In this function we hash the bands to various buckets using the hash function defined above. 
-    Args:
-        hash_functions:[(functional)]
-            The hash functions we use to hash various bands to the buckets
-        usersTotal::[int]
-            The total number of users. 
-        b::[int]
-            The number of bands we used. 
-        split_S::[NumPy 3D Array]
-            The signature matrix split in various bands, resulting in a 3D NumPy array. 
-        
-    Returns:
-        candidate_pairs::[NumPy 2D Array]
-            Returns a 2-dimensinal NumPy array of user pairs that we found to be candidate pairs. 
-    """
+
+    #Hashing the bands to various buckets 
     hash_table = {}
     hash_counter = 0 
     candidate_pairs = []
@@ -156,7 +145,6 @@ def hashing(hash_functions,usersTotal,b,split_S):
             #Apply the hash function to the band
             hashed_value = hash_functions[band_idx](tuple(current_band))
 
-            #Check if the hashed_value is in the hash_table or not 
             if hashed_value not in hash_table:
                 hash_table[hashed_value] = [(u, band_idx)]
             else:
@@ -169,7 +157,7 @@ def hashing(hash_functions,usersTotal,b,split_S):
                 #Add the current pair to the hash table
                 hash_table[hashed_value].append((u, band_idx))
 
-    #Finally, we sort the candidate pairs such that we start off with the smallest u1
+    #Finally, we sort the candidate pairs such that we start off with the smallest u1 
     candidate_pairs = np.array(candidate_pairs)
     candidate_pairs[:,0], candidate_pairs[:,1] = candidate_pairs[:,1], candidate_pairs[:,0].copy()
     sorted_idx = np.argsort(candidate_pairs[:,0])
@@ -179,46 +167,26 @@ def hashing(hash_functions,usersTotal,b,split_S):
     return candidate_pairs
 
 def jaccard_similarity(candidate_pairs,data):
-    """
-    In this function we use numpy to vectorize the Jaccard Similarity calculations for all candidate pairs.
-    Using numpy to read in all users at once drastically improves the efficiency of the code.
-    The memory cost of converting sparse row matrices with datatype int64 costs a lot of RAM, so for that reason we convert the dtype to int8 first.
-    Args:
-        candidate_pairs::[NumPy 2D Array]
-            2-dimensinal NumPy array of user pairs that we found to be candidate pairs. 
-        data::[sparse matrix]
-            The sparse row matrix of the data defined before
-        
-    Returns:
-        simPairs::[2D List]
-            Returns a list of the user-pairs that have a Jaccard Similarity above 0.5
-        simPairs_value::[List]
-            Returns a list of the corresponding Jaccard Similarities of the user pairs. 
-            Useful for plotting! 
-    """
-    #Here, we read in all the users from the sparse row matrix at once. 
+    #In this function we use numpy to vectorize the Jaccard Similarity calculations for all candidate pairs
+    #Using numpy drastically improves the efficiency of the code
+    #The memory cost of converting sparse row matrices with datatype int64 costs a lot of RAM, so for that reason we convert the dtype to int8 first 
     users1 = data[:,candidate_pairs[:,0]].astype(np.int8).toarray()
     users2 = data[:,candidate_pairs[:,1]].astype(np.int8).toarray()
 
     num_pairs = len(candidate_pairs[:,0])
     simPairs = []
     simPairs_value = []
-    #Write the accepted user pairs to a file per iteration
     with open('js.txt','w') as file:
         for i in range(num_pairs):
             one_gave_rating = np.logical_and(users1[:,i],users2[:,i]) #The logical AND operator represents the intersection
             both_gave_rating = np.logical_or(users1[:,i],users2[:,i]) #The logical OR operator represents the union 
 
-            #Count the number of elements in the intersection and union of C_1 and C_2 (movie vectors)
             nom = np.sum(one_gave_rating)
             denom = np.sum(both_gave_rating)
-            #Calculate the resulting Jac. Sim. value
             total = nom/denom
-            #Check if above threshold AND if we are not double-counting pairs
             if total > 0.5 and total not in simPairs_value:
                 simPairs.append(candidate_pairs[i].tolist())
                 simPairs_value.append(total)
-                #Write to a .txt file in the correct format
                 file.write(f"{candidate_pairs[i,0]}, {candidate_pairs[i,1]}\n")
                 
     print('Accepted user pairs: \n',simPairs)
@@ -226,12 +194,10 @@ def jaccard_similarity(candidate_pairs,data):
     print('Number of similar user pairs:',len(simPairs_value))
     return simPairs,simPairs_value
 
-#This part is dedicated to plotting the similar users with a Jaccard Similarity above 0.5, with ascending order 
+
 
 def jaccardSim_results(simPairs_value):
-    #Plots the distribution of Jaccard Similarity values
-    import matplotlib.pyplot as plt
-
+    #This part is dedicated to plotting the similar users with a Jaccard Similarity above 0.5, with ascending order 
     plt.scatter(np.arange(len(simPairs_value)),np.sort(simPairs_value),s=5)
     plt.xlabel('Most similar pairs')
     plt.ylabel('Jaccard Similarity')
@@ -240,21 +206,16 @@ def jaccardSim_results(simPairs_value):
 
 def apply_jaccardSim(data_path,seed):
     """
-    This function applies the full algorithm corresponding to finding the similar user pairs using the Jaccard Similarity. 
-    Args:
-        data_path::[str]
-            The path to the data file, input by the user. 
-        seed::[int]
-            The random NumPy seed used for the RNG dependant functions in the code, input by the user. 
+    Main function that calls all other functions to do the calculations of the Jaccard similarity
     """
 
     b = 35  #Number of bands we want to use to split the signature matrix in        
     r = 9   #The rows of values per band 
-    m = 0.1 #Fraction of rows that we want to pick a random permutation from. According to the book (top of page 88), the
+    m = 0.1 #fraction of rows that we want to pick a random permutation from. According to the book (top of page 88), the
             #resulting signature matrix should still be valid. This also increases speed of the calculation of the signature matrix 
             #by a factor 1/m, which helps a lot. 
 
-    #We use 'seed' as argument for any function that uses RNG 
+    #Use 'seed' as argument for any function that uses RNG 
 
     data = loadData_js(data_path)
     sigMatrix = minhashing(data,m,int(b*r),seed) 
@@ -264,10 +225,349 @@ def apply_jaccardSim(data_path,seed):
 
     hash_functions = [generate_hash_function(r, dim_bandedMatrix[2],seed) for _ in range(b*10)]
     candidate_pairs = hashing(hash_functions,dim_bandedMatrix[2],b,split_sigMatrix)
-    _,similar_pairs_value = jaccard_similarity(candidate_pairs,data)    
+    similar_pairs,similar_pairs_value = jaccard_similarity(candidate_pairs,data)    
     jaccardSim_results(similar_pairs_value)
 
-import sys, getopt
+#------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#CS
+
+def loadData_cs(data_path):
+    """
+    This function is dedicated to loading in the data, converting the data to a sparse col matrix (since the data is sparse) 
+    
+
+    Args:
+        data_path::[str]
+            The path to the data file, in this case user_movie_rating.npy
+    Returns:
+        sparse_colMatrix_full::[sparse matrix]
+            Returns a sparse col matrix containing all the data, with movieIDs as rows and userIDs as columns 
+    """
+    # Load the full data
+    data = np.load(data_path)
+    
+    # Create a sparse column matrix
+    sparse_col_matrix = csc_matrix((data[:, 2], (data[:, 1], data[:, 0])))
+    
+    return sparse_col_matrix
+
+
+def random_projections(data_matrix, num_permutations, seed):
+    """
+    This function creates a signature matrix using the sparse col matrix as input. To do so, the random projections theory described
+    in the report is used. For more information on the general picture, please consult the report. 
+    The size of the produced signature matrix can be influenced by choosing the number of permutations, num_permutations. 
+
+    Args:
+        data_matrix::[sparse matrix]
+            Uses a sparse col matrix created using the data. 
+        num_permutations::[int]
+            Tells the code how many permutations to use for the signature matrix, directly corresponding to the number
+            of rows the signature matrix will contain. 
+        seed::[int]
+            The NumPy seed used for the random functions.
+        
+    Returns:
+        signatureMatrix::[NumPy 2D array]
+            Returns a two-dimensional numpy array (matrix) with rows the number of permutations and columns the number of users
+    """
+
+    random_perm_matrix = np.random.choice([-1, 1], size=(num_permutations, data_matrix.shape[0]))
+    signature_matrix = np.zeros((random_perm_matrix.shape[0], data_matrix.shape[1]))
+
+    for c in range(data_matrix.shape[1]):
+        x_T = data_matrix[:, c].T
+        for r in range(num_permutations): 
+            dot_product = x_T.dot(random_perm_matrix[r, :])
+
+            if dot_product > 0:
+                signature_matrix[r, c] = 1
+            else:
+                signature_matrix[r, c] = -1
+
+    return signature_matrix
+
+def random_hash_functions(num_functions, num_buckets, seed):
+    #create random hash functions
+    
+    hash_functions = []
+    for _ in range(num_functions):
+        a = np.random.randint(1, num_buckets)
+        b = np.random.randint(0, num_buckets)
+        hash_functions.append(lambda x: tuple((a * xi + b) % num_buckets for xi in x))
+    return hash_functions
+
+def apply_lsh_band(band_id, signature_matrix, hash_functions, rows_per_band, num_users):
+    """
+    Apply the banding technique to the signature matrix
+    """
+    
+    start_row = band_id * rows_per_band
+    end_row = (band_id + 1) * rows_per_band
+    sub_matrix = signature_matrix[start_row:end_row, :]
+
+    bucket_list = {}
+
+    for col_id in range(num_users):
+        hashed_value = tuple(hf(tuple(sub_matrix[:, col_id])) for hf in hash_functions)
+        if hashed_value not in bucket_list:
+            bucket_list[hashed_value] = []
+        bucket_list[hashed_value].append(col_id)
+
+    return bucket_list
+
+def apply_lsh_parallel(signature_matrix, hash_functions, num_bands, rows_per_band):
+    """
+    Apply the LSH technique to the signature matrix, using the random hash functions
+    """
+    num_users = signature_matrix.shape[1]
+    bucket_lists = [{} for _ in range(num_bands)]
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        band_results = list(executor.map(
+            lambda x: apply_lsh_band(x, signature_matrix, hash_functions, rows_per_band, num_users),
+            range(num_bands)
+        ))
+
+    for band_id, band_result in enumerate(band_results):
+        bucket_lists[band_id] = band_result
+
+    return bucket_lists
+
+def find_candidate_pairs(bucket_lists, cosine_similarity_threshold):
+    """
+    This functions searches through all the buckets and finds candidate pairs
+    """
+    candidate_pairs = set()
+
+    for buckets in bucket_lists:
+        for bucket_id, user_list in buckets.items():
+            if len(user_list) > 1:
+                for i in range(len(user_list)):
+                    for j in range(i + 1, len(user_list)):
+                        user1 = user_list[i]
+                        user2 = user_list[j]
+                        candidate_pairs.add(tuple(sorted([user1, user2])))
+
+    return candidate_pairs   
+
+def write_to_file(file_path, pairs):
+    """
+    This functions writes our final pairs to a txt file
+    """
+    with open(file_path, 'w') as f:  # Use 'a' mode to append to the file
+        for pair in pairs:
+            f.write(f"{pair[0]}, {pair[1]}\n")
+
+
+def calculate_cosine_similarity(pair, sparse_col_matrix):
+    """
+    This file calculates the cosine similarity between two complete user-vectors 
+    """
+    u1, u2 = pair
+    v1 = sparse_col_matrix[:, u1].toarray().flatten()
+    v2 = sparse_col_matrix[:, u2].toarray().flatten()
+
+    mag_v1 = np.linalg.norm(v1)
+    mag_v2 = np.linalg.norm(v2)
+
+    if mag_v1 == 0 or mag_v2 == 0:
+        return u1, u2, 0  # Avoid division by zero
+
+    cos_dist = np.arccos(np.dot(v1, v2) / (mag_v1 * mag_v2))
+    cos_sim = 1 - cos_dist / np.pi
+
+    return u1, u2, cos_sim
+
+def CosineSim_results(final_pairs_cs):
+    """
+    This function makes a scatter plot of the sorted cosine similarity of the final pairs
+    """
+    # Scatter plot for most similar pairs
+    x_data = np.arange(1, len(final_pairs_cs)+1)
+    y_data = np.array([])
+    for i in range(0, len(final_pairs_cs)):
+        y_data = np.append(y_data, final_pairs_cs[i][2])
+    y_data = np.sort(y_data)
+
+    plt.scatter(x_data, y_data, s=5)
+    plt.title('%i pairs with CS > 0.73' %len(x_data))
+    plt.xlabel('Most similar pairs')
+    plt.ylabel('Cosine Similarity')
+    plt.savefig('cs_similarity_result.png')
+
+
+
+
+def apply_cosineSim(data_path,seed):
+    """
+    Main function that calls all other functions to do the calculations of the cosine similarity
+    """
+
+    #Use 'seed' as argument for any function that uses RNG 
+
+    data = loadData_cs(data_path)
+    sparse_col_matrix = data
+
+    # Create a signature matrix
+    print("Create signature matrix...")
+    begin = timeit.default_timer()
+    signature_matrix = random_projections(data,100, seed) 
+    end = timeit.default_timer() - begin
+    print('Time to make signature matrix: ', end / 60, ' minutes')
+
+    # Define LSH parameters
+    num_hash_functions = 10
+    num_buckets = 1000000
+    num_bands = 2  # Experiment with the number of bands
+    rows_per_band = 21  # Experiment with the number of rows per band
+    #These values of (b=2, r=21) give us most pairs while remaining < 10 min on a 8 Gb RAM computer
+
+    # Generate random hash functions
+    hash_functions = random_hash_functions(num_hash_functions, num_buckets, seed)
+
+    # Apply LSH in parallel
+    begin = timeit.default_timer()
+    bucket_lists = apply_lsh_parallel(signature_matrix, hash_functions, num_bands, rows_per_band)
+    end = timeit.default_timer() - begin
+    print('LSH Execution Time: ', end / 60, ' minutes')
+
+    # Find candidate pairs
+    begin = timeit.default_timer()
+    candidate_pairs = find_candidate_pairs(bucket_lists,cosine_similarity_threshold=0.73)
+    end = timeit.default_timer() - begin
+    print('Candidate Pairs Execution Time: ', end / 60, ' minutes')
+    print("Number of candidate pairs:", len(candidate_pairs))
+
+    # Convert candidate_pairs set to a list
+    candidate_pairs = list(candidate_pairs)
+
+    begin = timeit.default_timer()
+    # Calculate cosine similarity for candidate pairs
+    final_pairs_cs = []
+    def process_batch(batch):
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = list(executor.map(lambda p: calculate_cosine_similarity(p, sparse_col_matrix), batch))
+        return [pair for pair in results if pair[2] > 0.73]
+
+    batch_size = 5000
+    for i in range(0, len(candidate_pairs), batch_size):
+        batch = candidate_pairs[i:i + batch_size]
+        final_pairs_cs.extend(process_batch(batch))
+    end = timeit.default_timer() - begin
+    # Dump results to files
+    write_to_file('cs.txt', final_pairs_cs)
+    print('Final Pairs Execution Time: ', end / 60, ' minutes')
+    print("Number of pairs with Cosine Similarity > 0.73:", len(final_pairs_cs), ", the final pairs are:\n", final_pairs_cs)
+    CosineSim_results(final_pairs_cs)
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#DCS
+
+def calculate_discrete_cosine_similarity(pair, sparse_col_matrix):
+    """
+    This file calculates the discrete cosine similarity between two complete user-vectors 
+    """
+    u1, u2 = pair
+    v1 = (sparse_col_matrix[:, u1].toarray()).flatten()
+    v2 = (sparse_col_matrix[:, u2].toarray()).flatten()
+    
+    v1[v1 > 0] = 1
+    v2[v2 > 0] = 1
+
+    mag_v1 = np.linalg.norm(v1)
+    mag_v2 = np.linalg.norm(v2)
+
+    dot_product = np.dot(v1, v2)
+    disc_cos_dist = np.arccos(dot_product / (mag_v1 * mag_v2))
+    disc_cos_sim = 1 - disc_cos_dist / np.pi
+
+    return u1, u2, disc_cos_sim
+ 
+def DiscreteCosineSim_results(final_pairs_dcs):
+    """
+    This function makes a scatter plot of the sorted discrete cosine similarity of the final pairs
+    """
+    # Scatter plot for most similar pairs
+    x_data = np.arange(1, len(final_pairs_dcs)+1)
+    y_data = np.array([])
+    for i in range(0, len(final_pairs_dcs)):
+        y_data = np.append(y_data, final_pairs_dcs[i][2])
+    y_data = np.sort(y_data)
+ 
+    plt.scatter(x_data, y_data, s=5)
+    plt.title('%i pairs with DCS > 0.73' %len(x_data))
+    plt.xlabel('Most similar pairs')
+    plt.ylabel('Discrete Cosine Similarity')
+    plt.savefig('dcs_similarity_result.png')
+ 
+def apply_discrete_cosineSim(data_path,seed):
+    """
+    Main function that calls all other functions to do the calculations of the discrete cosine similarity
+    """
+ 
+    #Use 'seed' as argument for any function that uses RNG 
+ 
+    data = loadData_cs(data_path) #Same as for the cosine similarity, so we use the same function
+    sparse_col_matrix = data
+ 
+    # Create a signature matrix
+    print("Create signature matrix...")
+    begin = timeit.default_timer()
+    signature_matrix = random_projections(data,100, seed) 
+    end = timeit.default_timer() - begin
+    print('Time to make signature matrix: ', end / 60, ' minutes')
+ 
+    # Define LSH parameters
+    num_hash_functions = 10
+    num_buckets = 1000000
+    num_bands = 2  # Experiment with the number of bands
+    rows_per_band = 21  # Experiment with the number of rows per band
+    #These values of (b=2, r=21) give us most pairs while remaining < 10 min on a 8 Gb RAM computer
+ 
+    # Generate random hash functions
+    hash_functions = random_hash_functions(num_hash_functions, num_buckets, seed)
+ 
+    # Apply LSH in parallel
+    begin = timeit.default_timer()
+    bucket_lists = apply_lsh_parallel(signature_matrix, hash_functions, num_bands, rows_per_band)
+    end = timeit.default_timer() - begin
+    print('LSH Execution Time: ', end / 60, ' minutes')
+ 
+    # Find candidate pairs
+    begin = timeit.default_timer()
+    candidate_pairs = find_candidate_pairs(bucket_lists,cosine_similarity_threshold=0.73) #same as for the cosine similarity, so re-use it
+    end = timeit.default_timer() - begin
+    print('Candidate Pairs Execution Time: ', end / 60, ' minutes')
+    print("Number of candidate pairs:", len(candidate_pairs))
+ 
+    # Convert candidate_pairs set to a list
+    candidate_pairs = list(candidate_pairs)
+ 
+    begin = timeit.default_timer()
+    # Calculate discrete cosine similarity for candidate pairs
+    final_pairs_dcs = []
+    def process_batch(batch):
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = list(executor.map(lambda p: calculate_discrete_cosine_similarity(p, sparse_col_matrix), batch))
+        return [pair for pair in results if pair[2] > 0.73]
+ 
+    batch_size = 5000
+    for i in range(0, len(candidate_pairs), batch_size):
+        batch = candidate_pairs[i:i + batch_size]
+        final_pairs_dcs.extend(process_batch(batch))
+    end = timeit.default_timer() - begin
+    # Dump results to files
+    write_to_file('dcs.txt', final_pairs_dcs)
+    print('Final Pairs Execution Time: ', end / 60, ' minutes')
+    print("Number of pairs with Discrete Cosine Similarity > 0.73:", len(final_pairs_dcs), ", the final pairs are:\n", final_pairs_dcs)
+    DiscreteCosineSim_results(final_pairs_dcs)
+    
+
+
+
+
+
 
 def main(argv):
     data_file_path = ''
@@ -299,11 +599,18 @@ def main(argv):
     if str(similarity_measure) == 'js':
         apply_jaccardSim(str(data_file_path),seed)
     elif str(similarity_measure) == 'cs':
-        print('we dont have that yet')
+        apply_cosineSim(str(data_file_path),seed)
     elif str(similarity_measure) == 'dcs':
-        print('we dont have that yet')
+        apply_discrete_cosineSim(str(data_file_path),seed)
     else:
         print("Please, choose one of these three options: [js,cs,dsc]")
  
 if __name__ == "__main__":
     main(sys.argv[1:])
+
+
+
+
+
+
+
